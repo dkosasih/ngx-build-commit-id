@@ -122,6 +122,10 @@
               "devServerTarget": "app:serve:production"
             }
           }
+        },
+        "commit-id": {
+          "builder": "ngx-build-commit-id:file",
+          "options": {}
         }
       }
     }},
