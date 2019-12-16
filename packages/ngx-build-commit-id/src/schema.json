@@ -1,0 +1,5 @@
+{
+    "id": "CommitBuilderSchema",
+    "title": "Commit-id builder",
+    "description": "Branch and revision id on console"
+}
