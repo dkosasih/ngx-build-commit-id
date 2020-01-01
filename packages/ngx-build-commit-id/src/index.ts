@@ -1,45 +1,104 @@
 import { BuilderContext, BuilderOutput, createBuilder } from '@angular-devkit/architect';
-import { json, getSystemPath, normalize } from '@angular-devkit/core';
+import { json, getSystemPath, normalize, JsonObject } from '@angular-devkit/core';
 import { tsquery } from '@phenomnomnominal/tsquery';
-import { of, Observable, bindNodeCallback } from 'rxjs';
-import { map, tap, catchError } from 'rxjs/operators';
+import { of, Observable, bindNodeCallback, from } from 'rxjs';
+import { map, tap, catchError, concatMap } from 'rxjs/operators';
 import { writeFile, writeFileSync, readFileSync } from 'fs';
 import * as ts from 'typescript';
 import { dedent } from 'ts-lint/lib/utils';
-import { verify } from 'crypto';
+import { hasImport } from './utils/ast-rels';
 
 const util = require('util');
 const exec = util.promisify(require('child_process').exec);
 
-export interface CommitBuilderSchema {
-    // purposely left empty for future extension
+export interface CommitBuilderSchema extends JsonObject {
+    environmentPath: string;
+    componentPath: string;
 }
-
+  
 function runBuilder(
-    _schema: CommitBuilderSchema,
+    schema: CommitBuilderSchema,
     context: BuilderContext
-): Observable<BuilderOutput> {
-    createVersionsFile(`${getSystemPath(normalize(context.workspaceRoot))}/src/environments/versions.ts`);
+): Observable<BuilderOutput> {    
+    const versionFilePath = `${getSystemPath(normalize(context.workspaceRoot))}/${schema.environmentPath}/versions`;
+    const componentPath = `${getSystemPath(normalize(context.workspaceRoot))}/${schema.componentPath}`;
     
-    const filename = `${getSystemPath(normalize(context.workspaceRoot))}/src/app/app.component.ts`;
-    const transformedContent = modifyComponent(filename);
+    const transformedContent = modifyComponent(componentPath, findRelativePathToAFile(componentPath, versionFilePath));
     
     const writeFileObservable = bindNodeCallback(writeFile);
     const logger = context.logger.createChild('CommitBuilder');
     
-    return writeFileObservable(filename, transformedContent).pipe(
-        map(() => ({ success: true })),
-        tap(() => logger.info('app.component modified')),
+    return from(createVersionsFile(
+        versionFilePath
+    )).pipe(
+        tap(() => logger.info(`Creating versions file in ${getSystemPath(normalize(context.workspaceRoot))}/${schema.environmentPath}/versions.ts`)),
+        concatMap(c => writeFileObservable(componentPath, transformedContent).pipe(
+            map(() => ({ success: true })),
+            tap(() => logger.info(`Amend revision log to ${componentPath}`))
+        )),
         catchError(e => {
-            logger.error('Failed to modify app.component', e);
+            logger.error('Failed to create build id', e);
             return of({ success: false });
         })
     );
 }
 
-const transformer  = <T extends ts.Node>(context: ts.TransformationContext) => {
+function modifyComponent(path: string, relativeVersionFilePath: string) {
+    let ast = ts.createSourceFile(
+        path, readFileSync(path).toString(), ts.ScriptTarget.ES2015, true, ts.ScriptKind.TS
+    );
+
+    if (hasImport('versions', ast)) {
+        ast = ts.createSourceFile(
+            ast.fileName,
+            `import { versions } from '${relativeVersionFilePath}'; ${ast.text}`,
+            ts.ScriptTarget.ES2015,
+            true,
+            ts.ScriptKind.TS
+        )
+    }
+
+    const transformedAst = ts.transform<ts.SourceFile>(ast, [transformer]);
+    const printer = ts.createPrinter();
+    const astSourceString = printer.printFile(transformedAst.transformed[0]);
+
+    return astSourceString;
+}
+
+function findRelativePathToAFile(filePath: string, fileToReference: string): string {
+    let filePathArray = filePath.split(/[\\\/]/);
+    let fileToReferenceArray = fileToReference.split(/[\\\/]/);
+
+    const numberToSlice = findNumberOfLayerToSlice(filePathArray, fileToReferenceArray);
+
+    filePathArray = filePathArray.slice(numberToSlice);
+    fileToReferenceArray = fileToReferenceArray.slice(numberToSlice);
+   
+    if (filePathArray.length === 1) {
+        return `./${fileToReferenceArray.join('/')}`
+    } 
+
+    let resultPath = '';
+    filePathArray.forEach((val, i) => {
+        resultPath += i < filePathArray.length - 1 ? '../' : '';
+    });
+
+    return resultPath +  fileToReferenceArray.join('/');     
+}
+
+function findNumberOfLayerToSlice(filePathArray: string[], fileToReferenceArray: string[]): number {
+    let index: number;
+    for (index = 0; index < filePathArray.length - 1; index++) {
+        if (fileToReferenceArray.length >= index + 1 &&
+            fileToReferenceArray[index] !== filePathArray[index]) {
+            break;
+        }
+    }
+    return index;
+}
+
+function transformer<T extends ts.Node>(context: ts.TransformationContext) {
     return (rootNode: T) => {
-        // visit() function will visit all the descendants node (recursively)  
         function visit(node: ts.Node): ts.Node {
             node = ts.visitEachChild(node, visit, context);
 
@@ -54,7 +113,7 @@ const transformer  = <T extends ts.Node>(context: ts.TransformationContext) => {
                 }
 
                 // try to get old constructor and replace it - otherwise create new one for it
-                const queryConstructor = tsquery.query(node, 'Constructor'); 
+                const queryConstructor = tsquery.query(node, 'Constructor');
                 const oldConstructor = queryConstructor.length > 0 ? queryConstructor[0] as ts.ConstructorDeclaration : null;
 
                 const singleQuoteStringLiteral = ts.createStringLiteral(consoleColorSetting);
@@ -107,7 +166,7 @@ const transformer  = <T extends ts.Node>(context: ts.TransformationContext) => {
                     oldClass.name,
                     oldClass.typeParameters,
                     oldClass.heritageClauses,
-                    [newConstructor, ...oldClass.members.filter(x=>x.kind !== ts.SyntaxKind.Constructor)]
+                    [newConstructor, ...oldClass.members.filter(x => x.kind !== ts.SyntaxKind.Constructor)]
                 );
                 return newClass;
             }
@@ -119,33 +178,9 @@ const transformer  = <T extends ts.Node>(context: ts.TransformationContext) => {
     }
 }  
 
-function modifyComponent(path: string) {
-    let ast = ts.createSourceFile(
-        path, readFileSync(path).toString(), ts.ScriptTarget.ES2015, true, ts.ScriptKind.TS
-    );
-
-    if (tsquery.query(ast, 'ImportSpecifier:has(Identifier[name=versions])').length === 0) {
-        ast = ts.createSourceFile(
-            ast.fileName,
-            'import { versions } from \'../environments/versions\';' + ast.text,
-            ts.ScriptTarget.ES2015,
-            true,
-            ts.ScriptKind.TS
-        )
-    }
-
-    const transformedAst = ts.transform<ts.SourceFile>(ast, [transformer]);
-    const printer = ts.createPrinter();
-    const astSourceString = printer.printFile(transformedAst.transformed[0]);
-
-    return astSourceString;
-}
-
 async function createVersionsFile(path: string) {
     const revision = (await exec('git rev-parse --short HEAD')).stdout.toString().trim();
     const branch = (await exec('git rev-parse --abbrev-ref HEAD')).stdout.toString().trim();
-  
-    console.log(`version: '${process.env.npm_package_version}', revision: '${revision}', branch: '${branch}'`);
   
     const content = dedent`
         // This is an automatically generated file - and should be listed in .gitignore
@@ -155,7 +190,7 @@ async function createVersionsFile(path: string) {
           branch: '${branch}'
         };`;
   
-    writeFileSync(path, content, {encoding: 'utf8'});
-  }
+    writeFileSync(path, content, { encoding: 'utf8' });
+}
 
 export default createBuilder<json.JsonObject & CommitBuilderSchema>(runBuilder);

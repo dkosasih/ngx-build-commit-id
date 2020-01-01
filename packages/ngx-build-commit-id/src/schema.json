@@ -1,5 +1,17 @@
 {
     "id": "CommitBuilderSchema",
     "title": "Commit-id builder",
-    "description": "Branch and revision id on console"
+    "description": "Branch and revision id on console",
+    "properties": {
+        "environmentPath": {
+            "type": "string",
+            "description": "Path to environments directory",
+            "default": "src/environments"
+        },
+        "componentPath": {
+            "type": "string",
+            "description": "Path to a component to inject version log",
+            "default": "src/app/app.component.ts"
+        }
+    }
 }

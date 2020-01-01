@@ -1,7 +1,7 @@
 {
     "$schema": "./node_modules/@angular-devkit/architect/src/builders-schema.json",
     "builders": {
-      "file": {
+      "commit-id": {
         "implementation": "./dist",
         "schema": "./dist/schema.json",
         "description": "Builder to include version file that have git commit-id as console.info"

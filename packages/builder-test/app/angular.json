@@ -124,8 +124,7 @@
           }
         },
         "commit-id": {
-          "builder": "ngx-build-commit-id:file",
-          "options": {}
+          "builder": "ngx-build-commit-id:commit-id"
         }
       }
     }},
