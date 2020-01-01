@@ -1,0 +1,17 @@
+{
+    "id": "CommitBuilderTeardownSchema",
+    "title": "Commit-id builder teardown",
+    "description": "Branch and revision id on console teardown to clean up unused files and code created",
+    "properties": {
+        "environmentPath": {
+            "type": "string",
+            "description": "Path to environments directory",
+            "default": "src/environments"
+        },
+        "componentPath": {
+            "type": "string",
+            "description": "Path to a component to inject version log",
+            "default": "src/app/app.component.ts"
+        }
+    }
+}

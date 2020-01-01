@@ -5,6 +5,11 @@
         "implementation": "./dist",
         "schema": "./dist/schema.json",
         "description": "Builder to include version file that have git commit-id as console.info"
+      },
+      "commit-id-teardown": {
+        "implementation": "./dist/teardown.ts",
+        "schema": "./dist/schema-teardown.json",
+        "description": "Commit-id teardown after build to delete unused files and additional code created"
       }
     }
   }
